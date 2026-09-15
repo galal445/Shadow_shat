@@ -19,6 +19,22 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/rooms/$(roomId)/members/$(memberId));
     }
 
+    function isRoomMember(roomId) {
+      return signedIn() && isMember(roomId, request.auth.uid);
+    }
+
+    function isSecretChat(chatId) {
+      return chatId == 'secret_group' || chatId == 'shadow_ops';
+    }
+
+    function secretRoomId(chatId) {
+      return chatId == 'shadow_ops' ? 'secret_room' : 'secret_group';
+    }
+
+    function canAccessSecretChat(chatId) {
+      return isSecretChat(chatId) && isRoomMember(secretRoomId(chatId));
+    }
+
     function hasAcceptedContact(otherUserId) {
       return signedIn()
         && get(/databases/$(database)/documents/users/$(request.auth.uid)/regularContacts/$(otherUserId)).data.status == 'accepted';
@@ -47,9 +63,10 @@ service cloud.firestore {
     }
 
     function canAccessChat(chatId) {
-      let chat = get(/databases/$(database)/documents/chats/$(chatId)).data;
-      return signedIn()
-        && (chat.chatType != 'direct' || isApprovedDirectChat(chatId));
+      return canAccessSecretChat(chatId)
+        || (signedIn() && !isSecretChat(chatId)
+          && (get(/databases/$(database)/documents/chats/$(chatId)).data.chatType != 'direct'
+            || isApprovedDirectChat(chatId)));
     }
 
     match /chats/{chatId}/messages/{messageId} {
@@ -150,7 +167,7 @@ service cloud.firestore {
     }
 
     match /rooms/{roomId}/members/{memberId} {
-      allow read: if signedIn();
+      allow read: if isRoomMember(roomId) || isOwner();
       allow create: if signedIn()
         && request.resource.data.addedBy == request.auth.uid
         && (memberId == request.auth.uid || isOwner());
