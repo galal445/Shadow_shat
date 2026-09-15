@@ -45,14 +45,12 @@ final ValueNotifier<String?> roomOwnerKeyHashNotifier = ValueNotifier<String?>(
 );
 
 const String defaultAppLockPassword = '174285396';
-const String initialSecretGroupPassword = '132465798';
-const String legacySecretGroupPassword = 'SHADOW-GROUP-2026';
 const bool secureLocalDemoMode = false;
 final ValueNotifier<Map<String, String>> chatPasswordsNotifier =
     ValueNotifier<Map<String, String>>({});
 const int maxSecretRoomMembers = 100;
 final ValueNotifier<List<String>> secretRoomMembersNotifier =
-    ValueNotifier<List<String>>(['أنت', 'System']);
+    ValueNotifier<List<String>>([]);
 
 final ValueNotifier<bool> englishLanguageNotifier = ValueNotifier<bool>(false);
 final ValueNotifier<bool> appLockEnabledNotifier = ValueNotifier<bool>(false);
@@ -63,6 +61,10 @@ final ValueNotifier<bool> ghostModeNotifier = ValueNotifier<bool>(true);
 final ValueNotifier<bool> autoDeleteMessagesNotifier = ValueNotifier<bool>(
   true,
 );
+final ValueNotifier<bool> secretGroupLockEnabledNotifier =
+    ValueNotifier<bool>(false);
+final ValueNotifier<String?> secretGroupPasswordHashNotifier =
+    ValueNotifier<String?>(null);
 final ValueNotifier<int> clearHistoryNotifier = ValueNotifier<int>(0);
 final ValueNotifier<bool> globalDarkModeNotifier = ValueNotifier<bool>(true);
 final ValueNotifier<Uint8List?> userProfileImageBytesNotifier =
@@ -393,9 +395,112 @@ Future<void> savePrivacySetting(String key, bool value) async {
           key: value,
           'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
+    if (key == 'ghostMode') {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'ghostMode': value,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    }
   } catch (error) {
     debugPrint('Privacy setting save error: $error');
   }
+}
+
+Future<Map<String, dynamic>> loadSecretGroupSettings() async {
+  secretGroupLockEnabledNotifier.value = false;
+  secretGroupPasswordHashNotifier.value = null;
+  if (!firebaseReady) return {};
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return {};
+  try {
+    final snapshot = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .collection('settings')
+        .doc('secretGroup')
+        .get();
+    final data = snapshot.data() ?? {};
+    final hash = data['passwordHash'];
+    final enabled = data['enabled'] == true;
+    secretGroupLockEnabledNotifier.value = enabled;
+    secretGroupPasswordHashNotifier.value =
+        enabled && hash is String && hash.isNotEmpty ? hash : null;
+    return data;
+  } catch (error) {
+    debugPrint('Secret group settings load error: $error');
+    return {};
+  }
+}
+
+Future<void> saveSecretGroupPassword(String password) async {
+  final hash = await hashPassword(password);
+  secretGroupLockEnabledNotifier.value = true;
+  secretGroupPasswordHashNotifier.value = hash;
+  if (!firebaseReady) return;
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return;
+  try {
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .collection('settings')
+        .doc('secretGroup')
+        .set({
+          'enabled': true,
+          'passwordHash': hash,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+  } catch (error) {
+    debugPrint('Secret group password save error: $error');
+  }
+}
+
+Future<void> disableSecretGroupLock() async {
+  secretGroupLockEnabledNotifier.value = false;
+  secretGroupPasswordHashNotifier.value = null;
+  if (!firebaseReady) return;
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return;
+  try {
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .collection('settings')
+        .doc('secretGroup')
+        .set({
+          'enabled': false,
+          'passwordHash': FieldValue.delete(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+  } catch (error) {
+    debugPrint('Secret group lock disable error: $error');
+  }
+}
+
+Future<DateTime> ensureSecretAccessStart(String roomId) async {
+  final fallback = DateTime.now();
+  if (!firebaseReady) return fallback;
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return fallback;
+  final key = roomId == 'secret_group'
+      ? 'secretGroupAccess'
+      : 'secretRoomAccess';
+  final reference = FirebaseFirestore.instance
+      .collection('users')
+      .doc(user.uid)
+      .collection('settings')
+      .doc(key);
+  try {
+    final snapshot = await reference.get();
+    final value = snapshot.data()?['startedAt'];
+    if (value is Timestamp) return value.toDate();
+    await reference.set({
+      'startedAt': Timestamp.fromDate(fallback),
+    }, SetOptions(merge: true));
+  } catch (error) {
+    debugPrint('Secret access start load error: $error');
+  }
+  return fallback;
 }
 
 Future<Map<String, dynamic>> loadPrivacySettings() async {
@@ -409,7 +514,13 @@ Future<Map<String, dynamic>> loadPrivacySettings() async {
         .collection('settings')
         .doc('privacy')
         .get();
-    return snapshot.data() ?? {};
+    final data = snapshot.data() ?? {};
+    if (data['ghostMode'] is bool) {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'ghostMode': data['ghostMode'],
+      }, SetOptions(merge: true));
+    }
+    return data;
   } catch (error) {
     debugPrint('Privacy settings load error: $error');
     return {};
@@ -637,14 +748,6 @@ Future<void> disableChatPassword(String chatName) async {
   }
 }
 
-Future<bool> matchesGroupPassword(String password, String? storedHash) async {
-  if (password == initialSecretGroupPassword ||
-      password == legacySecretGroupPassword) {
-    return true;
-  }
-  return storedHash != null && await hashPassword(password) == storedHash;
-}
-
 Future<void> loadAppLockSettings() async {
   var passwordHash = await hashPassword(defaultAppLockPassword);
   var enabled = false;
@@ -825,98 +928,6 @@ Future<void> showChangeAppLockPasswordDialog(BuildContext context) async {
   confirmController.dispose();
 }
 
-Future<void> showChangeGroupPasswordDialog(BuildContext context) async {
-  final oldController = TextEditingController();
-  final newController = TextEditingController();
-  String? storedHash;
-
-  try {
-    if (firebaseReady) {
-      final doc = await FirebaseFirestore.instance
-          .collection('config')
-          .doc('secretGroup')
-          .get();
-      final value = doc.data()?['passwordHash'];
-      storedHash = value is String
-          ? value
-          : await hashPassword(initialSecretGroupPassword);
-    }
-  } catch (_) {
-    storedHash = null;
-  }
-
-  if (!context.mounted) return;
-  await showDialog<void>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: const Text('تغيير كلمة سر المجموعة'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: oldController,
-            obscureText: true,
-            decoration: const InputDecoration(labelText: 'كلمة السر القديمة'),
-          ),
-          TextField(
-            controller: newController,
-            obscureText: true,
-            decoration: const InputDecoration(labelText: 'كلمة السر الجديدة'),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext),
-          child: const Text('إلغاء'),
-        ),
-        ElevatedButton(
-          onPressed: () async {
-            if (storedHash == null ||
-                newController.text.trim().isEmpty ||
-                await hashPassword(oldController.text) != storedHash) {
-              if (context.mounted)
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('كلمة السر القديمة غير صحيحة'),
-                  ),
-                );
-              return;
-            }
-            try {
-              await FirebaseFirestore.instance
-                  .collection('config')
-                  .doc('secretGroup')
-                  .set({
-                    'passwordHash': await hashPassword(
-                      newController.text.trim(),
-                    ),
-                    'updatedAt': FieldValue.serverTimestamp(),
-                  }, SetOptions(merge: true));
-              if (dialogContext.mounted) Navigator.pop(dialogContext);
-              if (context.mounted)
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('تم تغيير كلمة السر بنجاح')),
-                );
-            } catch (error) {
-              debugPrint('Group password update error: $error');
-              if (context.mounted)
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('لا يمكن تغيير كلمة السر من هذا الحساب'),
-                  ),
-                );
-            }
-          },
-          child: const Text('حفظ'),
-        ),
-      ],
-    ),
-  );
-  oldController.dispose();
-  newController.dispose();
-}
-
 bool isDuplicateFirebaseInitializationError(Object error) {
   if (error is FirebaseException) {
     if (error.code == 'duplicate-app') return true;
@@ -988,6 +999,7 @@ Future<void> initializeFirebase() async {
         debugPrint('User profile setup failed: $error');
       }
       await loadAppLockSettings();
+      await loadSecretGroupSettings();
       await loadRoomOwnerKey();
       await loadSecretRoomCode();
     }
@@ -1104,9 +1116,11 @@ Future<void> updatePresence(bool isOnline) async {
   final user = FirebaseAuth.instance.currentUser;
   if (user == null) return;
   try {
+    final now = Timestamp.now();
     await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
       'isOnline': isOnline,
-      'lastSeen': FieldValue.serverTimestamp(),
+      'lastSeen': now,
+      'lastSeenAt': now,
     }, SetOptions(merge: true));
   } catch (error) {
     debugPrint('Presence update error: $error');
@@ -1272,6 +1286,7 @@ class _AuthGateState extends State<AuthGate> {
       await ensureUserProfile();
       await setupPushNotifications();
       await loadAppLockSettings();
+      await loadSecretGroupSettings();
       if (mounted) setState(() => _authError = null);
     } catch (error) {
       debugPrint('Authenticated session setup failed: $error');
@@ -1823,7 +1838,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   void _chooseChatToSecure(BuildContext context) {
-    const List<String> chats = [];
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -1834,30 +1848,62 @@ class _ChatListScreenState extends State<ChatListScreen> {
         ),
         content: SizedBox(
           width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: chats.length,
-            itemBuilder: (context, index) => ListTile(
-              leading: const Icon(
-                Icons.chat_bubble_outline,
-                color: Color(0xFF00FF66),
-              ),
-              title: Text(
-                chats[index],
-                style: const TextStyle(color: Colors.white),
-              ),
-              onTap: () {
-                Navigator.pop(dialogContext);
-                _setChatPassword(context, chats[index]);
-              },
-            ),
+          child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: FirebaseAuth.instance.currentUser == null
+                ? null
+                : FirebaseFirestore.instance
+                    .collection('users')
+                    .doc(FirebaseAuth.instance.currentUser!.uid)
+                    .collection(contactsCollectionName(ContactScope.regular))
+                    .orderBy('updatedAt', descending: true)
+                    .snapshots(),
+            builder: (context, snapshot) {
+              final contacts = snapshot.data?.docs ??
+                  const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+              if (contacts.isEmpty) {
+                return const Text(
+                  'لا توجد دردشات متاحة للتأمين',
+                  style: TextStyle(color: Colors.white70),
+                );
+              }
+              return ListView.builder(
+                shrinkWrap: true,
+                itemCount: contacts.length,
+                itemBuilder: (context, index) {
+                  final data = contacts[index].data();
+                  final chatName = data['displayName'] as String? ?? 'دردشة';
+                  return ListTile(
+                    leading: const Icon(
+                      Icons.chat_bubble_outline,
+                      color: Color(0xFF00FF66),
+                    ),
+                    title: Text(
+                      chatName,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    onTap: () {
+                      Navigator.pop(dialogContext);
+                      final currentUid = FirebaseAuth.instance.currentUser?.uid;
+                      final chatId = currentUid == null
+                          ? chatName
+                          : directChatDocumentId(currentUid, contacts[index].id);
+                      _setChatPassword(context, chatName, chatId: chatId);
+                    },
+                  );
+                },
+              );
+            },
           ),
         ),
       ),
     );
   }
 
-  void _setChatPassword(BuildContext context, String chatName) {
+  void _setChatPassword(
+    BuildContext context,
+    String chatName, {
+    String? chatId,
+  }) {
     final TextEditingController passwordController = TextEditingController();
     showDialog(
       context: context,
@@ -1886,7 +1932,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
               final String password = passwordController.text.trim();
               if (password.length < 4) return;
               try {
-                await saveChatPassword(chatName, password);
+                await saveChatPassword(chatId ?? chatName, password);
               } catch (error) {
                 debugPrint('Chat password save error: $error');
                 return;
@@ -3655,11 +3701,23 @@ class _SecretRoomScreenState extends State<SecretRoomScreen>
     BuildContext dialogContext,
     TextEditingController controller,
   ) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || !firebaseReady) return;
     final enteredKey = controller.text.trim();
     final isCurrentOwnerKey = enteredKey == initialRoomOwnerKey;
     final matchesStoredOwnerKey = await hashPassword(enteredKey) ==
         roomOwnerKeyHashNotifier.value;
-    if (isCurrentOwnerKey || matchesStoredOwnerKey) {
+    var isConfiguredOwner = false;
+    try {
+      final ownerSnapshot = await FirebaseFirestore.instance
+          .collection('config')
+          .doc('app')
+          .get();
+      isConfiguredOwner = ownerSnapshot.data()?['ownerUid'] == user.uid;
+    } catch (error) {
+      debugPrint('Room owner verification error: $error');
+    }
+    if (isConfiguredOwner && (isCurrentOwnerKey || matchesStoredOwnerKey)) {
       Navigator.pop(dialogContext);
       Navigator.push(
         context,
@@ -3681,7 +3739,7 @@ class _SecretRoomScreenState extends State<SecretRoomScreen>
   }
 }
 
-class SecretMembersScreen extends StatelessWidget {
+class SecretMembersScreen extends StatefulWidget {
   final String roomId;
   final String title;
 
@@ -3692,13 +3750,33 @@ class SecretMembersScreen extends StatelessWidget {
   });
 
   @override
+  State<SecretMembersScreen> createState() => _SecretMembersScreenState();
+}
+
+class _SecretMembersScreenState extends State<SecretMembersScreen> {
+  DateTime? _accessStartedAt;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadAccessStart());
+  }
+
+  Future<void> _loadAccessStart() async {
+    final startedAt = await ensureSecretAccessStart(widget.roomId);
+    if (mounted) {
+      setState(() => _accessStartedAt = startedAt);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
         backgroundColor: const Color(0xFF0D1117),
         appBar: AppBar(
-          title: Text(title),
+          title: Text(widget.title),
           backgroundColor: const Color(0xFF171D26),
           foregroundColor: Colors.white,
           centerTitle: true,
@@ -3713,7 +3791,7 @@ class SecretMembersScreen extends StatelessWidget {
             : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                 stream: FirebaseFirestore.instance
                     .collection('rooms')
-                    .doc(roomId)
+                    .doc(widget.roomId)
                     .collection('members')
                     .orderBy('addedAt')
                     .snapshots(),
@@ -3733,8 +3811,22 @@ class SecretMembersScreen extends StatelessWidget {
                       ),
                     );
                   }
-                  final members = snapshot.data!.docs;
-                  if (members.isEmpty) {
+                  final currentUid = FirebaseAuth.instance.currentUser?.uid;
+                  final visibleMembers = snapshot.data!.docs.where((member) {
+                    final addedAt = member.data()['addedAt'];
+                    if (currentUid != null && member.id == currentUid) {
+                      return true;
+                    }
+                    if (addedAt is! Timestamp) {
+                      return false;
+                    }
+                    if (_accessStartedAt == null) {
+                      return true;
+                    }
+                    return addedAt.toDate().isAfter(_accessStartedAt!);
+                  }).toList();
+
+                  if (visibleMembers.isEmpty) {
                     return const Center(
                       child: Text(
                         'لا يوجد أعضاء حتى الآن',
@@ -3744,7 +3836,7 @@ class SecretMembersScreen extends StatelessWidget {
                   }
                   return ListView.separated(
                     padding: const EdgeInsets.all(16),
-                    itemCount: members.length,
+                    itemCount: visibleMembers.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (context, index) => ListTile(
                       tileColor: const Color(0xFF18231F),
@@ -3755,15 +3847,15 @@ class SecretMembersScreen extends StatelessWidget {
                         backgroundColor: Color(0xFF38E8A5),
                         child: Icon(Icons.person, color: Colors.black),
                       ),
-                      title: const Text(
-                        'مجهول الهوية',
-                        style: TextStyle(
+                      title: Text(
+                        visibleMembers[index].data()['displayName'] ?? 'مجهول الهوية',
+                        style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                       subtitle: Text(
-                        'عضو في $title',
+                        'عضو في ${widget.title}',
                         style: const TextStyle(color: Colors.white54),
                       ),
                     ),
@@ -3779,12 +3871,12 @@ class SecretMembersScreen extends StatelessWidget {
 // 3. شاشة الشات الجماعي السري (المجموعة السرية الآمنة 🛡️)
 // ==========================================
 class SecretChatScreen extends StatefulWidget {
-  final bool requirePassword;
+  final bool? requirePassword;
   final String chatTitle;
 
   const SecretChatScreen({
     super.key,
-    this.requirePassword = true,
+    this.requirePassword,
     this.chatTitle = 'المجموعة السرية الآمنة',
   });
 
@@ -3807,8 +3899,10 @@ class BlackRoomScreen extends StatelessWidget {
 class _SecretChatScreenState extends State<SecretChatScreen>
     with SingleTickerProviderStateMixin {
   bool _isUnlocked = false;
+  bool _requiresPassword = false;
   bool _isSecretMember = false;
   String? _groupPasswordHash;
+  DateTime? _accessStartedAt;
   final TextEditingController _passController = TextEditingController();
   final TextEditingController _messageController = TextEditingController();
   final AudioRecorder _secretVoiceRecorder = AudioRecorder();
@@ -3820,29 +3914,16 @@ class _SecretChatScreenState extends State<SecretChatScreen>
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
-  final List<Map<String, dynamic>> _secretMessages = [
-    {
-      "sender": "System",
-      "text": "أهلاً بك في المجموعة السرية الآمنة",
-      "isMe": false,
-    },
-  ];
+  final List<Map<String, dynamic>> _secretMessages = [];
 
   @override
   void initState() {
     super.initState();
-    _isUnlocked = !widget.requirePassword;
-    if (widget.chatTitle.contains('الغرفة السوداء')) {
-      _secretMessages[0]['text'] = 'أهلاً بك في غرفة Shadow Ops';
-      _secretMessages[0]['roomNote'] = 'قناة خاصة وآمنة داخل الغرفة السرية';
-    }
+    _requiresPassword = widget.requirePassword ??
+        secretGroupLockEnabledNotifier.value;
+    _isUnlocked = !_requiresPassword;
     _loadLocalSecretVoiceMessages();
-    _listenToSecretMessages();
-    _loadSecretMembership();
-    _loadGroupPassword();
-    if (!widget.requirePassword) {
-      unawaited(_ensureSecretMembership());
-    }
+    unawaited(_prepareSecretChat());
     clearHistoryNotifier.addListener(_clearSecretMessages);
     _pulseController = AnimationController(
       vsync: this,
@@ -3852,6 +3933,16 @@ class _SecretChatScreenState extends State<SecretChatScreen>
     _pulseAnimation = Tween<double>(begin: 0.85, end: 1.15).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+  }
+
+  Future<void> _prepareSecretChat() async {
+    final roomId = widget.chatTitle.contains('الغرفة السوداء')
+        ? 'secret_room'
+        : 'secret_group';
+    _accessStartedAt = await ensureSecretAccessStart(roomId);
+    await _loadSecretMembership();
+    await _loadGroupPassword();
+    _listenToSecretMessages();
   }
 
   Future<void> _sendSecretMessage() async {
@@ -3899,130 +3990,15 @@ class _SecretChatScreenState extends State<SecretChatScreen>
   }
 
   Future<void> _loadGroupPassword() async {
-    if (!widget.requirePassword) return;
-    final fallbackHash = await hashPassword(initialSecretGroupPassword);
-    if (!firebaseReady) {
-      if (mounted) setState(() => _groupPasswordHash = fallbackHash);
-      return;
+    if (widget.chatTitle.contains('الغرفة السوداء')) return;
+    await loadSecretGroupSettings();
+    if (mounted) {
+      setState(() {
+        _groupPasswordHash = secretGroupPasswordHashNotifier.value;
+        _requiresPassword = secretGroupLockEnabledNotifier.value;
+        _isUnlocked = !_requiresPassword;
+      });
     }
-    try {
-      final doc = await FirebaseFirestore.instance
-          .collection('config')
-          .doc('secretGroup')
-          .get();
-      final storedHash = doc.data()?['passwordHash'];
-      final hash = storedHash is String
-          ? storedHash
-          : await hashPassword(initialSecretGroupPassword);
-      if (mounted) setState(() => _groupPasswordHash = hash);
-    } catch (error) {
-      debugPrint('Group password load error: $error');
-      if (mounted) setState(() => _groupPasswordHash = fallbackHash);
-    }
-  }
-
-  Future<void> _changeGroupPassword() async {
-    final oldController = TextEditingController();
-    final newController = TextEditingController();
-    final confirmController = TextEditingController();
-    if (!firebaseReady) {
-      debugPrint('Firebase not ready during password change');
-      oldController.dispose();
-      newController.dispose();
-      confirmController.dispose();
-      return;
-    }
-    _groupPasswordHash ??= await hashPassword(initialSecretGroupPassword);
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: const Color(0xFF101B18),
-        title: const Text(
-          'تغيير كلمة السر',
-          style: TextStyle(color: Colors.white),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: oldController,
-              obscureText: true,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(labelText: 'كلمة السر القديمة'),
-            ),
-            TextField(
-              controller: newController,
-              obscureText: true,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(labelText: 'كلمة السر الجديدة'),
-            ),
-            TextField(
-              controller: confirmController,
-              obscureText: true,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                labelText: 'تأكيد كلمة السر الجديدة',
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('إلغاء'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final newPassword = newController.text.trim();
-              final oldPasswordVerified = await matchesGroupPassword(
-                oldController.text.trim(),
-                _groupPasswordHash,
-              );
-              if (!oldPasswordVerified ||
-                  newPassword.length < 4 ||
-                  newPassword != confirmController.text.trim()) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('تحقق من القديمة والجديدة وتأكيدها'),
-                    ),
-                  );
-                }
-                return;
-              }
-              try {
-                await FirebaseFirestore.instance
-                    .collection('config')
-                    .doc('secretGroup')
-                    .set({
-                      'passwordHash': await hashPassword(newPassword),
-                      'updatedAt': FieldValue.serverTimestamp(),
-                    }, SetOptions(merge: true));
-                final newHash = await hashPassword(newPassword);
-                if (mounted) setState(() => _groupPasswordHash = newHash);
-                if (dialogContext.mounted) Navigator.pop(dialogContext);
-                if (mounted)
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('تم تغيير كلمة السر بنجاح')),
-                  );
-              } catch (error) {
-                debugPrint('Group password update error: $error');
-                if (mounted)
-                  showGenericFailureSnackBar(context);
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFFD76A),
-              foregroundColor: Colors.black,
-            ),
-            child: const Text('حفظ'),
-          ),
-        ],
-      ),
-    );
-    oldController.dispose();
-    newController.dispose();
-    confirmController.dispose();
   }
 
   String get _secretChatId => widget.chatTitle.contains('الغرفة السوداء')
@@ -4071,7 +4047,12 @@ class _SecretChatScreenState extends State<SecretChatScreen>
           .collection('members')
           .doc(user.uid)
           .get();
-      if (mounted) setState(() => _isSecretMember = membership.exists);
+      final addedAt = membership.data()?['addedAt'];
+      final isFreshMember = membership.exists &&
+          (addedAt is! Timestamp ||
+              _accessStartedAt == null ||
+              addedAt.toDate().isAfter(_accessStartedAt!));
+      if (mounted) setState(() => _isSecretMember = isFreshMember);
     } catch (error) {
       debugPrint('Secret membership load error: $error');
       if (mounted) setState(() => _isSecretMember = false);
@@ -4091,6 +4072,7 @@ class _SecretChatScreenState extends State<SecretChatScreen>
           (snapshot) {
             if (!mounted) return;
             final currentUid = FirebaseAuth.instance.currentUser?.uid;
+            final accessStartedAt = _accessStartedAt;
             final messages = snapshot.docs.map((doc) {
               final data = doc.data();
               final deletedFor = data['deletedFor'];
@@ -4100,6 +4082,11 @@ class _SecretChatScreenState extends State<SecretChatScreen>
                 return null;
               }
               final timestamp = data['createdAt'];
+              if (accessStartedAt != null &&
+                  timestamp is Timestamp &&
+                  timestamp.toDate().isBefore(accessStartedAt)) {
+                return null;
+              }
               final mediaUrl = data['mediaUrl'] as String?;
               final localMediaPath = mediaUrl != null &&
                       mediaUrl.startsWith('local://')
@@ -4764,10 +4751,10 @@ class _SecretChatScreenState extends State<SecretChatScreen>
                       shadowColor: Colors.amberAccent.withOpacity(0.5),
                     ),
                     onPressed: () async {
-                      if (await matchesGroupPassword(
-                        _passController.text.trim(),
-                        _groupPasswordHash,
-                      )) {
+                      final enteredHash =
+                          await hashPassword(_passController.text.trim());
+                      if (_groupPasswordHash != null &&
+                          enteredHash == _groupPasswordHash) {
                         setState(() => _isUnlocked = true);
                         await _ensureSecretMembership();
                       } else {
@@ -4798,14 +4785,6 @@ class _SecretChatScreenState extends State<SecretChatScreen>
                     ),
                   ),
                 ),
-                if (widget.requirePassword)
-                  TextButton(
-                    onPressed: _changeGroupPassword,
-                    child: const Text(
-                      'تغيير كلمة السر',
-                      style: TextStyle(color: Colors.white54),
-                    ),
-                  ),
               ],
             ),
           ),
@@ -5810,6 +5789,60 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                 });
               },
             ),
+            ValueListenableBuilder<bool>(
+              valueListenable: secretGroupLockEnabledNotifier,
+              builder: (context, isLocked, child) {
+                return SwitchListTile(
+                  secondary: Icon(
+                    Icons.groups_rounded,
+                    color: isDark ? Colors.amberAccent : Colors.black,
+                  ),
+                  title: Text(
+                    'قفل المجموعة السرية',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                  subtitle: Text(
+                    isLocked
+                        ? 'المجموعة محمية بكلمة سر خاصة بك'
+                        : 'المجموعة مفتوحة بدون كلمة سر',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  value: isLocked,
+                  activeColor: isDark ? Colors.amberAccent : Colors.black,
+                  onChanged: (value) {
+                    if (value) {
+                      _showSecretGroupPasswordDialog();
+                    } else {
+                      unawaited(disableSecretGroupLock());
+                    }
+                  },
+                );
+              },
+            ),
+            ValueListenableBuilder<bool>(
+              valueListenable: secretGroupLockEnabledNotifier,
+              builder: (context, isLocked, child) {
+                if (!isLocked) return const SizedBox.shrink();
+                return ListTile(
+                  leading: Icon(
+                    Icons.password_rounded,
+                    color: isDark ? Colors.amberAccent : Colors.black,
+                  ),
+                  title: Text(
+                    'تغيير كلمة سر المجموعة',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () => _showSecretGroupPasswordDialog(changing: true),
+                );
+              },
+            ),
             Divider(color: Theme.of(context).dividerColor, height: 30),
             const Text(
               'إدارة البيانات',
@@ -5901,6 +5934,67 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
         ],
       ),
     ).then((_) => passwordController.dispose());
+  }
+
+  void _showSecretGroupPasswordDialog({bool changing = false}) {
+    final oldController = TextEditingController();
+    final newController = TextEditingController();
+    final confirmController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(changing ? 'تغيير كلمة سر المجموعة' : 'قفل المجموعة السرية'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (changing)
+              TextField(
+                controller: oldController,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'كلمة السر الحالية'),
+              ),
+            TextField(
+              controller: newController,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'كلمة السر الجديدة'),
+            ),
+            TextField(
+              controller: confirmController,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'تأكيد كلمة السر'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final newPassword = newController.text.trim();
+              final currentHash = secretGroupPasswordHashNotifier.value;
+              final oldPasswordValid = !changing ||
+                  (currentHash != null &&
+                      await hashPassword(oldController.text.trim()) == currentHash);
+              if (!oldPasswordValid ||
+                  newPassword.length < 4 ||
+                  newPassword != confirmController.text.trim()) {
+                debugPrint('Secret group password validation failed');
+                return;
+              }
+              await saveSecretGroupPassword(newPassword);
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    ).then((_) {
+      oldController.dispose();
+      newController.dispose();
+      confirmController.dispose();
+    });
   }
 
   void _showDeleteConfirmationDialog(BuildContext context) {
@@ -6544,10 +6638,18 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   String _presenceText(Map<String, dynamic>? data) {
+    if (data?['ghostMode'] == true) return appText('الحالة مخفية', 'Status hidden');
     if (data?['isOnline'] == true) return 'متصل الآن';
-    final value = data?['lastSeen'];
-    if (value is! Timestamp) return 'آخر ظهور غير متاح';
-    final date = value.toDate().toLocal();
+    final value = data?['lastSeen'] ?? data?['lastSeenAt'];
+    DateTime? date;
+    if (value is Timestamp) {
+      date = value.toDate().toLocal();
+    } else if (value is DateTime) {
+      date = value.toLocal();
+    } else if (value is String) {
+      date = DateTime.tryParse(value)?.toLocal();
+    }
+    if (date == null) return 'آخر ظهور غير متاح';
     final localizations = MaterialLocalizations.of(context);
     final formattedDate = localizations.formatShortDate(date);
     final formattedTime = localizations.formatTimeOfDay(
@@ -8131,20 +8233,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                             ),
                             tooltip: 'رجوع',
                             onPressed: () => Navigator.pop(context),
-                          ),
-                          IconButton(
-                            icon: Icon(
-                              _chatPassword == null
-                                  ? Icons.lock_outline_rounded
-                                  : Icons.lock_reset_rounded,
-                              color: const Color(0xFFB7FFD8),
-                            ),
-                            tooltip: _chatPassword == null
-                                ? 'تأمين الدردشة'
-                                : 'تغيير كلمة السر',
-                            onPressed: _chatPassword == null
-                                ? _setChatPasswordForCurrentChat
-                                : _changeChatPassword,
                           ),
                           Expanded(
                             child:
