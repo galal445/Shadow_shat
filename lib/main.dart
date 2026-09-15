@@ -137,6 +137,20 @@ Future<void> showChatNotification({
   );
 }
 
+void showGenericFailureSnackBar(
+  BuildContext context, {
+  String message = 'حدثت مشكلة، حاول مرة أخرى',
+}) {
+  if (!context.mounted) return;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(message),
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 2),
+    ),
+  );
+}
+
 Future<void> setupPushNotifications() async {
   if (!firebaseReady) return;
   final user = FirebaseAuth.instance.currentUser;
@@ -797,15 +811,7 @@ Future<void> showChangeAppLockPasswordDialog(BuildContext context) async {
             } catch (error) {
               debugPrint('App lock password save error: $error');
               if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      firebaseFailureMessage.contains('operation-not-allowed')
-                          ? 'فعّل Anonymous Authentication في Firebase Console'
-                          : 'تم حفظ كلمة السر على الجهاز، وستتم مزامنتها عند اتصال Firebase',
-                    ),
-                  ),
-                );
+                showGenericFailureSnackBar(context);
               }
             }
           },
@@ -872,9 +878,7 @@ Future<void> showChangeGroupPasswordDialog(BuildContext context) async {
               if (context.mounted)
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text(
-                      'كلمة السر القديمة غير صحيحة أو Firebase غير متصل',
-                    ),
+                    content: Text('كلمة السر القديمة غير صحيحة'),
                   ),
                 );
               return;
@@ -1321,7 +1325,7 @@ class _AuthGateState extends State<AuthGate> {
                   Text(
                     _authError == null
                         ? 'جاري تجهيز التطبيق...'
-                        : 'تعذر الدخول، اضغط لإعادة المحاولة',
+                        : 'حدثت مشكلة، حاول مرة أخرى',
                     style: const TextStyle(color: Colors.white70),
                   ),
                   if (_authError != null)
@@ -1414,9 +1418,7 @@ class _AppLockGateState extends State<AppLockGate>
         _passwordController.clear();
       });
     } else {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('كلمة المرور غير صحيحة')));
+      debugPrint('App lock password check failed');
     }
   }
 
@@ -1948,11 +1950,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
       }
     } catch (error) {
       debugPrint('Chat contact removal error: $error');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر حذف الدردشة من Firebase')),
-        );
-      }
     }
   }
 
@@ -2037,9 +2034,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
                       builder: (context, snapshot) {
                         if (snapshot.hasError) {
                           return Center(
-                            child: Text(
-                              'خطأ في تحميل الدردشات: ${snapshot.error}',
-                              style: const TextStyle(color: Colors.red),
+                            child: const Text(
+                              'حدثت مشكلة، حاول مرة أخرى',
+                              style: TextStyle(color: Colors.white70),
                             ),
                           );
                         }
@@ -2632,11 +2629,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
       }
     } catch (error) {
       debugPrint('Accept contact request error: $error');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر قبول طلب الموافقة')),
-        );
-      }
     }
   }
 
@@ -2674,11 +2666,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
       }
     } catch (error) {
       debugPrint('Reject contact request error: $error');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر رفض طلب الموافقة')),
-        );
-      }
     }
   }
 
@@ -2736,11 +2723,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
 
       final targetUid = matchingUsers.docs.first.id;
       if (targetUid == user.uid) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('لا يمكنك إضافة حسابك كجهة اتصال')),
-          );
-        }
         return;
       }
       final resolvedDisplayName = name.isEmpty
@@ -2824,11 +2806,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
       return;
     }
     if (targetUid == user.uid) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('لا يمكنك إضافة حسابك')),
-        );
-      }
       return;
     }
     if (_sendingRequestUids.contains(targetUid)) return;
@@ -2921,11 +2898,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
       }
     } catch (error) {
       debugPrint('One-tap add request error: $error');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر إرسال طلب الموافقة')),
-        );
-      }
     } finally {
       if (mounted) setState(() => _sendingRequestUids.remove(targetUid));
     }
@@ -3115,7 +3087,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
               child: user == null
                   ? const Center(
                       child: Text(
-                        'Firebase غير متصل',
+                        'حدثت مشكلة، حاول مرة أخرى',
                         style: TextStyle(color: Colors.white70),
                       ),
                     )
@@ -3130,7 +3102,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
                         if (snapshot.hasError)
                           return const Center(
                             child: Text(
-                              'تعذر تحميل جهات الاتصال',
+                              'حدثت مشكلة، حاول مرة أخرى',
                               style: TextStyle(color: Colors.white70),
                             ),
                           );
@@ -3734,7 +3706,7 @@ class SecretMembersScreen extends StatelessWidget {
         body: !firebaseReady
             ? const Center(
                 child: Text(
-                  'Firebase غير متصل',
+                  'حدثت مشكلة، حاول مرة أخرى',
                   style: TextStyle(color: Colors.white70),
                 ),
               )
@@ -3749,7 +3721,7 @@ class SecretMembersScreen extends StatelessWidget {
                   if (snapshot.hasError) {
                     return const Center(
                       child: Text(
-                        'تعذر تحميل أعضاء الغرفة',
+                        'حدثت مشكلة، حاول مرة أخرى',
                         style: TextStyle(color: Colors.white70),
                       ),
                     );
@@ -3954,9 +3926,7 @@ class _SecretChatScreenState extends State<SecretChatScreen>
     final newController = TextEditingController();
     final confirmController = TextEditingController();
     if (!firebaseReady) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('تعذر الاتصال بـ Firebase')));
+      debugPrint('Firebase not ready during password change');
       oldController.dispose();
       newController.dispose();
       confirmController.dispose();
@@ -4038,11 +4008,7 @@ class _SecretChatScreenState extends State<SecretChatScreen>
               } catch (error) {
                 debugPrint('Group password update error: $error');
                 if (mounted)
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('تعذر حفظ كلمة سر المجموعة في Firebase'),
-                    ),
-                  );
+                  showGenericFailureSnackBar(context);
               }
             },
             style: ElevatedButton.styleFrom(
@@ -4348,9 +4314,6 @@ class _SecretChatScreenState extends State<SecretChatScreen>
         debugPrint('Secret voice recording stop error: $error');
         if (mounted) {
           setState(() => _isSecretRecording = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('خطأ في إيقاف التسجيل: $error')),
-          );
         }
       }
       return;
@@ -4360,9 +4323,6 @@ class _SecretChatScreenState extends State<SecretChatScreen>
       final hasPermission = await _secretVoiceRecorder.hasPermission();
       if (!hasPermission) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('اسمح للتطبيق باستخدام الميكروفون أولًا')),
-        );
         return;
       }
 
@@ -4380,11 +4340,6 @@ class _SecretChatScreenState extends State<SecretChatScreen>
       if (mounted) setState(() => _isSecretRecording = true);
     } catch (error) {
       debugPrint('Secret voice recording start error: $error');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ في بدء التسجيل: $error')),
-        );
-      }
     }
   }
 
@@ -4407,21 +4362,12 @@ class _SecretChatScreenState extends State<SecretChatScreen>
       }
     } catch (error) {
       debugPrint('Secret audio playback error: $error');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر تشغيل الرسالة الصوتية')),
-        );
-      }
     }
   }
 
   Future<void> _saveSecretMessage(String text) async {
     if (!firebaseReady) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(_firebaseUnavailableMessage())));
-      }
+      debugPrint('Secret message save skipped: Firebase not ready');
       return;
     }
     try {
@@ -4444,9 +4390,7 @@ class _SecretChatScreenState extends State<SecretChatScreen>
     } catch (error) {
       debugPrint('Secret message save error: $error');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر حفظ الرسالة في Firebase')),
-        );
+        showGenericFailureSnackBar(context);
       }
     }
   }
@@ -4466,11 +4410,6 @@ class _SecretChatScreenState extends State<SecretChatScreen>
       return;
     }
     if (forEveryone && message['isMe'] != true) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('يمكن حذف رسائلك لدى الجميع فقط')),
-        );
-      }
       return;
     }
 
@@ -4496,11 +4435,6 @@ class _SecretChatScreenState extends State<SecretChatScreen>
       }
     } catch (error) {
       debugPrint('Secret message delete error: $error');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر حذف الرسالة من Firebase')),
-        );
-      }
     }
   }
 
@@ -4674,13 +4608,7 @@ class _SecretChatScreenState extends State<SecretChatScreen>
   }
 
   String _firebaseUnavailableMessage() {
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.linux) {
-      return 'Firebase Firestore غير مدعوم على Linux desktop. شغّل التطبيق على Android أو Chrome.';
-    }
-    if (firebaseFailureMessage.contains('operation-not-allowed')) {
-      return 'فعّل Anonymous Authentication من Firebase Console ثم أعد تشغيل التطبيق.';
-    }
-    return 'Firebase غير متصل: لم يتم حفظ الرسالة. فعّل Anonymous Authentication وتأكد من إعداد Firebase Web.';
+    return 'حدثت مشكلة، حاول مرة أخرى';
   }
 
   String _formatMessageTime() {
@@ -6018,11 +5946,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
                     }
                   } catch (error) {
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('تعذر حذف سجل المحادثات من Firebase'),
-                        ),
-                      );
+                      showGenericFailureSnackBar(context);
                     }
                     debugPrint('Full history delete action error: $error');
                   }
@@ -6955,11 +6879,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     required bool isEncrypted,
   }) async {
     if (!firebaseReady) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(_firebaseUnavailableMessage())));
-      }
+      debugPrint('Chat message save skipped: Firebase not ready');
       return;
     }
     final user = FirebaseAuth.instance.currentUser;
@@ -7042,21 +6962,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     } catch (error) {
       debugPrint('Chat message save error: $error');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر حفظ الرسالة في Firebase')),
-        );
+        showGenericFailureSnackBar(context);
       }
     }
   }
 
   String _firebaseUnavailableMessage() {
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.linux) {
-      return 'Firebase Firestore غير مدعوم على Linux desktop. شغّل التطبيق على Android أو Chrome.';
-    }
-    if (firebaseFailureMessage.contains('operation-not-allowed')) {
-      return 'فعّل Anonymous Authentication من Firebase Console ثم أعد تشغيل التطبيق.';
-    }
-    return 'Firebase غير متصل: لم يتم حفظ الرسالة. فعّل Anonymous Authentication وتأكد من إعداد Firebase Web.';
+    return 'حدثت مشكلة، حاول مرة أخرى';
   }
 
   Future<void> _unlockChat() async {
@@ -7072,9 +6984,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         });
       }
     } else {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('كلمة المرور غير صحيحة')));
+      debugPrint('Chat unlock failed: invalid password');
     }
   }
 
@@ -7113,11 +7023,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       }
     } catch (error) {
       debugPrint('Audio message playback error: $error');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر تشغيل التسجيل الصوتي')),
-        );
-      }
     }
   }
 
@@ -7163,11 +7068,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               if (oldHash != _chatPassword ||
                   newPassword.length < 4 ||
                   newPassword != confirmController.text.trim()) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('تحقق من كلمة السر القديمة والجديدة'),
-                  ),
-                );
+                debugPrint('Chat password update validation failed');
                 return;
               }
               try {
@@ -7179,13 +7080,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 if (dialogContext.mounted) Navigator.pop(dialogContext);
               } catch (error) {
                 debugPrint('Chat password update error: $error');
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('تعذر حفظ كلمة السر في Firebase'),
-                    ),
-                  );
-                }
               }
             },
             child: const Text('حفظ'),
@@ -7230,9 +7124,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               final newPassword = passwordController.text.trim();
               final confirmed = confirmController.text.trim();
               if (newPassword.length < 4 || newPassword != confirmed) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('كلمة المرور غير متطابقة أو قصيرة')),
-                );
+                debugPrint('Chat password set validation failed');
                 return;
               }
               try {
@@ -7247,11 +7139,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 if (dialogContext.mounted) Navigator.pop(dialogContext);
               } catch (error) {
                 debugPrint('Chat password set error: $error');
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('تعذر تأمين الدردشة')),
-                  );
-                }
               }
             },
             child: const Text('تأمين'),
@@ -7266,9 +7153,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   Future<void> _disableChatPassword() async {
     final enteredHash = await hashPassword(_chatPasswordController.text.trim());
     if (enteredHash != _chatPassword) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('أدخل كلمة السر الحالية أولًا')),
-      );
+      debugPrint('Disable chat password failed: invalid current password');
       return;
     }
     if (mounted) {
@@ -7317,9 +7202,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         debugPrint('Voice recording stop error: $error');
         if (mounted) {
           setState(() => _isRecording = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('خطأ في إيقاف التسجيل: $error')),
-          );
         }
       }
       return;
@@ -7329,9 +7211,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       final hasPermission = await _voiceRecorder.hasPermission();
       if (!hasPermission) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('اسمح للتطبيق باستخدام الميكروفون أولًا')),
-        );
         return;
       }
 
@@ -7350,11 +7229,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       if (mounted) setState(() => _isRecording = true);
     } catch (error) {
       debugPrint('Voice recording start error: $error');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ في بدء التسجيل: $error')),
-        );
-      }
     }
   }
 
@@ -7412,10 +7286,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           );
         }
       } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('فشل رفع الملف')),
-        );
-        // إزالة الرسالة الفاشلة
+        debugPrint('Media upload failed');
         if (mounted) {
           setState(() {
             if (messageIndex < _messages.length) {
@@ -7427,10 +7298,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     } catch (error) {
       debugPrint('Media pick error: $error');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $error')),
-        );
-        // إزالة الرسالة الفاشلة
         setState(() {
           if (messageIndex < _messages.length) {
             _messages.removeAt(messageIndex);
@@ -7477,11 +7344,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     } catch (error) {
       debugPrint('Media upload error: $error');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تعذر الرفع للسحابة، تم حفظ الملف على الجهاز'),
-          ),
-        );
+        showGenericFailureSnackBar(context);
       }
       return saveLocally();
     }
@@ -7555,11 +7418,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       }
     } catch (error) {
       debugPrint('Media message save error: $error');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ في حفظ الرسالة: $error')),
-        );
-      }
     }
   }
 
@@ -7668,11 +7526,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final docId = message.firestoreId;
     if (user == null) return;
     if (forEveryone && !message.isMe) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('يمكن حذف رسائلك لدى الجميع فقط')),
-        );
-      }
       return;
     }
     if (docId == null || !firebaseReady) {
@@ -7699,11 +7552,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       if (mounted) setState(() => _messages.remove(message));
     } catch (error) {
       debugPrint('Regular message delete error: $error');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر حذف الرسالة من Firebase')),
-        );
-      }
     }
   }
 
@@ -7939,7 +7787,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                     Icon(Icons.image_not_supported, color: Colors.white54),
                     SizedBox(height: 8),
                     Text(
-                      'فشل تحميل الصورة',
+                      'تعذر عرض الصورة',
                       style: TextStyle(color: Colors.white54, fontSize: 12),
                     ),
                   ],
@@ -8733,11 +8581,7 @@ class _AccountAndThemeScreenState extends State<AccountAndThemeScreen> {
       }
     } catch (error) {
       debugPrint('Profile image pick error: $error');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر اختيار الصورة الشخصية')),
-        );
-      }
+      debugPrint('Profile image selection failed');
     }
   }
 
@@ -8932,9 +8776,6 @@ class _AccountAndThemeScreenState extends State<AccountAndThemeScreen> {
       debugPrint('Local phone link save error: $error');
       if (mounted) {
         setState(() => _isLinkingPhone = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر حفظ رقم الهاتف على الجهاز')),
-        );
       }
     }
   }
@@ -8974,52 +8815,15 @@ class _AccountAndThemeScreenState extends State<AccountAndThemeScreen> {
       debugPrint('Phone credential link failed: ${error.code}');
       if (!mounted) return;
       setState(() => _isLinkingPhone = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_phoneAuthErrorMessage(error))),
-      );
     } catch (error) {
       debugPrint('Unexpected phone credential link error: $error');
       if (!mounted) return;
       setState(() => _isLinkingPhone = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تعذر إكمال التحقق من رقم الهاتف')),
-      );
     }
   }
 
   String _phoneAuthErrorMessage(Object error) {
-    final code = error is FirebaseAuthException ? error.code : '';
-    switch (code) {
-      case 'credential-already-in-use':
-      case 'provider-already-linked':
-        return 'رقم الهاتف مرتبط بحساب آخر أو مرتبط بالفعل بهذا الحساب';
-      case 'invalid-verification-code':
-        return 'كود التحقق غير صحيح';
-      case 'invalid-verification-id':
-        return 'انتهت صلاحية جلسة التحقق، أعد إرسال الكود';
-      case 'invalid-phone-number':
-        return 'رقم الهاتف غير صحيح، استخدم الصيغة الدولية مثل +201xxxxxxxxx';
-      case 'app-not-authorized':
-        return 'تطبيق Android غير مصرح به في Firebase؛ أضف package name وبصمات SHA-1 وSHA-256 للتطبيق الصحيح';
-      case 'missing-client-identifier':
-        return 'إعدادات تطبيق Android ناقصة؛ أضف google-services.json وأعد بناء التطبيق';
-      case 'captcha-check-failed':
-        return 'فشل التحقق من التطبيق؛ تأكد من SHA-1 وSHA-256 وإعدادات reCAPTCHA في Firebase';
-      case 'invalid-app-credential':
-        return 'بيانات اعتماد التطبيق غير صحيحة؛ تأكد أن google-services.json من نفس مشروع Firebase';
-      case 'quota-exceeded':
-        return 'تم تجاوز حصة رسائل SMS في Firebase، حاول لاحقًا أو راجع خطة المشروع';
-      case 'network-request-failed':
-        return 'تعذر الاتصال بخدمة Firebase، تحقق من الإنترنت ثم أعد المحاولة';
-      case 'too-many-requests':
-        return 'تم تجاوز عدد المحاولات، حاول لاحقًا';
-      case 'operation-not-allowed':
-        return 'فعّل تسجيل الدخول برقم الهاتف من Firebase Console';
-      case 'user-not-found':
-        return 'لم يتم العثور على الحساب الحالي';
-      default:
-        return 'تعذر ربط رقم الهاتف. تحقق من الرقم واتصال Firebase';
-    }
+    return 'حدثت مشكلة، حاول مرة أخرى';
   }
 
   void _showEditNameDialog() {
