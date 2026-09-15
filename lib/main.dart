@@ -61,7 +61,7 @@ final ValueNotifier<String?> appLockPasswordNotifier = ValueNotifier<String?>(
 );
 final ValueNotifier<bool> ghostModeNotifier = ValueNotifier<bool>(true);
 final ValueNotifier<bool> autoDeleteMessagesNotifier = ValueNotifier<bool>(
-  false,
+  true,
 );
 final ValueNotifier<int> clearHistoryNotifier = ValueNotifier<int>(0);
 final ValueNotifier<bool> globalDarkModeNotifier = ValueNotifier<bool>(true);
